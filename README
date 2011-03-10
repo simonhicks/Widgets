@@ -1,0 +1,239 @@
+in
+  "when a widget is passed to a layout, content returned by evaluating 'more' 
+  will be inserted into the layout wherever there (put ~tag) is used"
+
+in-css
+  "The same as in, except it defaults to using the tag :css
+  Usage: 
+  (in-css [:h1 :color :blue]) 
+  ; is equivalent to ...
+  (in :css [:h1 :color :blue])
+
+  Any rule-set created using in-css and rendered using put-css will only be added 
+  once to the final layout. Two different sets of rules that share some rules will
+  both be included. For example, if the following expressions are included in a 
+  layout (through different widgets of course), the h1 rule will be printed twice.
+
+  (in-css [:h1 :color :red]
+          [:h2 :color :blue])
+
+  (in-css [:h1 :color :red]
+          [:h3 :color :green])
+
+  As a result, it's more efficient to include all three rules both times (see below)
+  so that one instance is dropped as being unnecessary.
+
+  (in-css [:h1 :color :red]     ; this can be included as many times as you like, but 
+          [:h2 :color :blue]    ; will only be printed once.
+          [:h3 :color :green]) 
+  "
+
+in-js
+  "This is like (in tag ...) except tag defaults to :js and js* is called on the passed forms.
+
+  Usage:
+  (in-js (alert \"Hello World!\"))
+  ; is equivalent to ...
+  (in :js (js* (alert \"Hello World!\")))
+
+  Content created using in-js and and rendered with put-js is treated as a once only dependency,
+  so if you include the same javascript widget in two different widgets, both rendered in the same 
+  layout the library will only be applied once.
+
+  (widget cool-effect
+    (in-js (. ($ \"img\") awesome-effect)))
+
+  (widget picture [p]
+    (cool-effect)
+    (image-tag p))
+
+  (widget pictures [pictures]
+    (for [p pictures] (picture p)))
+  ; when pictures is rendered, 'cool-effect' widget is only included once
+  "
+
+widget
+  "This is used to create widgets. Widgets are view functions that encapsulate all the
+  information for a page-element, effect or any other idea in a single place. They are 
+  mostly used to contain HTML, Javascript and CSS, but they are essentially glorified
+  hash-maps, and can actually be used to contain anything you want. Widgets are defined
+  with a similar syntax to functions...
+
+  (widget my-widget 
+    \"Really helpful and insightful doc string\"
+    [some args]
+    (in :title \"My Awesome Website\")
+    (in :main [:div ... content])
+
+  ... but with some minor differences. Like functions, they take any number of 
+  expressions, however unlike functions, any content returned by an (in :tag ...), 
+  (in-css ...) or (in-js ...) expression or another widget will be included in the 
+  return value of the widget, and anything else will be evaluated (for side effects)
+  and then discarded, so the following widget...
+
+  (widget letters
+    (in :a \\a)
+    (in :b \\b)
+    (in :c \\c)
+    (+ 1 2 3))
+
+  ...will return a map-like object containing the letters, but will discard the value 
+  of the final expression (+ 1 2 3) since it is not inside an (in :tag ...) expression.
+  Also, notice that if a widget has no arguments, the argument list is optional (as are
+  doc-strings).
+
+  Once created widgets are passed to layouts where the content is rendered as part of 
+  the layout. Each form will be rendered in the layout in the corresponding (put :tag) 
+  expr.
+
+  (my-layout (widget-with-args 1 2 3) (another-widget))
+
+  See (doc layout) for more detail and examples.
+
+  Widgets can also be nested inside each other. In this case the (in :tag ...) content 
+  from each widget will be added to the layout in the order the widgets are evaluated.
+
+  (widget user-index
+    [users]
+    (in :title \"User index\")
+    (user-index-css)
+    (for [u users] (user-view u)))
+  
+  You can inspect what a widget will evaluate to by simply calling it (my-widget)
+
+  (user-index users)
+  ; => {:main [:div ....
+  
+  Widgets are assumed to be pure functions and are therefore memoized to improve 
+  performance. If a widget is impure then you can prevent memoization, by marking it 
+  as impure using metadata:
+
+  (widget ^{:inpure true} impure-widget
+    (in :main [:h1 (str \"I generate random numbers like \" (rand 10) \"!\")]))
+  (impure? impure-widget)
+  ; => true
+
+  If you use an impure widget inside another widget, then the enclosing widget will 
+  also be marked as impure (and won't be memoized):
+
+  (widget also-impure
+    (impure-widget)
+    (another-widget))
+  (impure? also-impure)
+  ; => true
+
+  You can also reset a memoized 'pure' widget using :reset as follows:
+
+  (widget memoized-rand [n]
+    (in :random (rand n)))
+  (memoized-rand 1)
+  ; => ({:random (0.7180514355873373)})
+
+  (memoized-rand 1)
+  ; => ({:random (0.7180514355873373)})
+
+  (memoized-rand :reset)
+  (memoized-rand 1)
+  ; => ({:random (0.42146250283757236)})
+
+  (memoized-rand 1)
+  ; => ({:random (0.42146250283757236)})
+  "
+
+render
+  "render is like an anonymous layout. It's useful for providing structure to nested
+  widgets. eg.
+
+  (widget word-li [text]
+    (in :words [:li text]))
+
+  (widget word-list [& words]
+    (in :main 
+        (render [:ul (put :words)] 
+                (for [w words] (word-li w)))))
+
+  (word-list \"hello\" \"world\")
+  ({:main (\"<ul><li>hello</li><li>world</li></ul>\")})
+
+  Any content from the widgets passed to render that is not used in a (put ...) expr 
+  will not be passed on to the enclosing widget.
+  "
+
+layout
+  "Used for defining layouts. Layouts are functions that take a number of widgets 
+  as arguments and return rendered html/js/css from within the widgets. This is 
+  done by using hiccup and the widget functions put, put-js and put-css.
+  
+  Within a layout, (put :tag) which will expand into a seq containing the return values
+  of each (in :tag ...) expr from the given widgets.
+  
+  (layout my-layout
+    [:html
+      [:head
+        (put :js)]
+      [:body
+        (put :main)]])
+  
+  (widget user-widget
+    [user]
+    (in :js
+      (include-js \"user-script.js\"))
+    (in :main
+      [:p (:name user)]))
+  
+  (my-layout (user-widget user))
+  ; => [:html 
+  ;       [:head [:script {:type \"text/javascript\" :src \"user-script.js\"}]]
+  ;       [:body [:p \"Bob\"]]]
+
+  When you want to insert css, you can use in-css instead of in :tag. This will 
+  render the content using gaka and place it within a css-tag in the layout at 
+  (put-css). This is equivalent to using (in :css ...) and 
+  (css-tag (css (put :css))). Similarly, for javascript you can use in-js and 
+  put-js instead of (in :js (js* ...)) and (javascript-tag (js (put :js))).
+  Both of these forms can also be used with a :tag (ie. (in-js :tag ...) and
+  (put-js :tag).
+
+  put, put-js and put-css are only valid inside a layout definition or render.
+
+  In addition to put-js, put-css and put :tag, there is also the onload 
+  function. This allows you to place js content from multiple widgets into a 
+  single window.onload callback. When used in a layout (or render) it expands 
+  to the following expression.
+  
+  (javascript-tag (js (set! window.onload (fn [] ~(cons 'do (put :onload))))))
+
+  Like widgets, layouts are assumed to be pure functions and are therefore 
+  memoized to improve performance. They can be reset by calling them with 
+  :reset. If a layout is impure and you wish to prevent memoization simply
+  mark it as impure when defining it...
+
+  (layout ^{:impure true} impure-layout
+    ... content elided...)
+
+  Like render, layouts can only render a structure nested inside a single outer 
+  vector.
+  "
+
+render-json
+  "Creates a hash containing the rendered content from the passed widgets, and returns
+  this hash as a json string. The hash has up to three keys (:html, :js and :css). The 
+  values stored in these keys are themselves hashes, with theircontents indexed by the 
+  tag originally used when the widgets were created."
+# widgets
+
+FIXME: write description
+
+## Usage
+
+FIXME: write
+
+## Installation
+
+FIXME: write
+
+## License
+
+Copyright (C) 2010 FIXME
+
+Distributed under the Eclipse Public License, the same as Clojure.
